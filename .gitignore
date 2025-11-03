@@ -201,6 +201,21 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# macOS
+.DS_Store
+
+# Python/venv
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Node/Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logs
+*.log
 # Marimo
 marimo/_static/
 marimo/_lsp/
