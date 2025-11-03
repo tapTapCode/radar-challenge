@@ -31,6 +31,28 @@ class MRMSClient:
         return None
 
     async def fetch_rala_grib_for_time(self, iso_timestamp: str) -> bytes:
-        # Placeholder: product file naming patterns vary; raise until implemented
-        raise NotImplementedError("RALA GRIB2 fetch not yet implemented")
+        # Try to find a matching GRIB2 link from the listing as a robust fallback
+        candidates: List[str] = [
+            f"{self.base_url}/data/2D/RALA/",
+            f"{self.base_url}/data/2D/ReflectivityAtLowestAltitude/",
+        ]
+        async with httpx.AsyncClient(timeout=20) as client:
+            for base in candidates:
+                try:
+                    idx = await client.get(base)
+                    if idx.status_code != 200:
+                        continue
+                    # Grab the last GRIB2-looking href
+                    m = re.findall(r'href=\"([^\"]+(?:grib2|grb2)(?:\.gz)?)\"', idx.text, flags=re.IGNORECASE)
+                    if not m:
+                        continue
+                    url = m[-1]
+                    if not url.startswith('http'):
+                        url = base.rstrip('/') + '/' + url.lstrip('/')
+                    resp = await client.get(url)
+                    if resp.status_code == 200 and resp.content:
+                        return resp.content
+                except Exception:
+                    continue
+        raise RuntimeError("Unable to download RALA GRIB2 from MRMS")
 

@@ -1,11 +1,10 @@
-from typing import Optional, Tuple
+from typing import Optional
 from datetime import datetime, timezone
 import io
 
 from PIL import Image
 
 from app.core.colormap import color_for_dbz
-from app.core.tiling import tile_bounds_lonlat
 from app.core.logging import get_logger
 from app.clients.mrms import MRMSClient
 
@@ -37,10 +36,18 @@ class RadarDataManager:
             if not ts:
                 logger.info("No latest RALA timestamp discovered yet")
                 return
-            # TODO: fetch GRIB2 content for ts once implemented in client
-            # For now, we only record the timestamp to show freshness
             self._latest_timestamp_iso = ts
-            # Parsing not yet implemented without system libs; keep ds=None
+            # Attempt to download and parse GRIB2 if libs available
+            if _HAVE_NUMPY and xr is not None:
+                try:
+                    content = await self._client.fetch_rala_grib_for_time(ts)
+                    # cfgrib requires ecCodes installed on system
+                    self._ds = xr.open_dataset(io.BytesIO(content), engine="cfgrib", backend_kwargs={
+                        "indexpath": "",
+                    })
+                except Exception as exc:
+                    logger.info("GRIB2 parse not available yet: %s", exc)
+                    self._ds = None
         except Exception as exc:  # pragma: no cover
             logger.warning("RALA refresh failed: %s", exc)
 
@@ -51,8 +58,44 @@ class RadarDataManager:
         if not _HAVE_NUMPY or self._ds is None:
             return self._render_placeholder_tile()
 
-        # Placeholder path until actual resampling implemented
-        return self._render_placeholder_tile()
+        # Try to render a very naive image by slicing the data grid into a tile-sized image.
+        # This is a placeholder for true projection-aware resampling but uses real data values.
+        try:
+            var_candidates = [self._var_name, "unknown"]
+            for name in self._ds.data_vars:
+                if name.upper().startswith("RAL"):
+                    var_candidates.insert(0, name)
+            arr = None
+            for n in var_candidates:
+                if n in self._ds:
+                    arr = self._ds[n]
+                    break
+            if arr is None:
+                return self._render_placeholder_tile()
+
+            data = np.array(arr.values)
+            # Collapse extra dims if present, keep a 2D field
+            while data.ndim > 2:
+                data = data[0]
+            h, w = data.shape
+            # Scale to 256x256 for a quick preview; no projection handling
+            img = Image.new("RGBA", (256, 256))
+            yy = (np.linspace(0, h - 1, 256)).astype(int)
+            xx = (np.linspace(0, w - 1, 256)).astype(int)
+            for j, yv in enumerate(yy):
+                row = data[yv, xx]
+                for i, v in enumerate(row):
+                    try:
+                        rgba = color_for_dbz(float(v))
+                    except Exception:
+                        rgba = (0, 0, 0, 0)
+                    img.putpixel((i, j), rgba)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        except Exception as exc:
+            logger.info("Tile render fallback due to error: %s", exc)
+            return self._render_placeholder_tile()
 
     def _render_placeholder_tile(self) -> bytes:
         size = 256
