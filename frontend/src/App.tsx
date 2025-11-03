@@ -15,6 +15,7 @@ export function App() {
   const [radarOpacity, setRadarOpacity] = useState(0.75)
   const [snackbarOpen, setSnackbarOpen] = useState(false)
   const [snackbarMsg, setSnackbarMsg] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4)
@@ -164,18 +165,30 @@ export function App() {
           <IconButton size="small" color="default" onClick={() => setSettingsOpen(true)}>
             <SettingsIcon fontSize="small" />
           </IconButton>
-          <IconButton size="small" color="primary" onClick={() => {
-            // manually trigger a refresh
-            fetch('/api/latest').then(r => r.json()).then(data => {
-              setTimestamp(data.timestamp)
-              const map = mapRef.current as any
-              if (map && map._radarLayer && data.timestamp) {
-                const base = '/api/tiles/{z}/{x}/{y}.png'
-                map._radarLayer.setUrl(`${base}?t=${encodeURIComponent(data.timestamp)}`)
+          <IconButton size="small" color="primary" disabled={refreshing} onClick={async () => {
+            setRefreshing(true)
+            try {
+              const res = await fetch('/api/latest')
+              if (res.ok) {
+                const data = await res.json()
+                setTimestamp(data.timestamp)
+                const map = mapRef.current as any
+                if (map && map._radarLayer && data.timestamp) {
+                  const base = '/api/tiles/{z}/{x}/{y}.png'
+                  map._radarLayer.setUrl(`${base}?t=${encodeURIComponent(data.timestamp)}`)
+                }
+              } else {
+                setSnackbarMsg('Failed to fetch latest timestamp')
+                setSnackbarOpen(true)
               }
-            }).catch(() => { setSnackbarMsg('Manual refresh failed'); setSnackbarOpen(true) })
+            } catch (e) {
+              setSnackbarMsg('Manual refresh failed')
+              setSnackbarOpen(true)
+            } finally {
+              setRefreshing(false)
+            }
           }}>
-            <RefreshIcon fontSize="small" />
+            <RefreshIcon fontSize="small" sx={{ animation: refreshing ? 'spin 1s linear infinite' : 'none', '@keyframes spin': { '0%': { transform: 'rotate(0deg)' }, '100%': { transform: 'rotate(360deg)' } } }} />
           </IconButton>
         </Box>
         <Typography variant="caption" color="#ddd">
